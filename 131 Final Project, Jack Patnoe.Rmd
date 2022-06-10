@@ -1,0 +1,1126 @@
+---
+title: "PSTAT 131 Final Project"
+author: "Jack Patnoe"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+## Intro
+
+
+
+![NFl Combine 40 Yard Dash](/Users/jackpatnoe/Desktop/Antoine-Winfield-030222-GETTY-FTR.jpg){width="600"}
+
+
+For this project, I am using data from the NFL Combine from 2009-2019. The goal with this project is to build a model that can predict 40 yard dash sprint times based on several different other metrics, such as age, position, BMI, and more.
+
+The NFL combine is an event where the best college football players in the world show off their physical abilities in front of NFL teams, hoping to get drafted.
+
+During the combine, players also display their football abilities, such as a quarterback making throws. But, for this project we will only focus on physical abilities and player types and how they are related to 40 yard dash times.
+
+The reason I chose the 40 yard dash time as the variable I want to predict, is because it is one of the most watched / talked about events for the combine, and everyone loves watching to see if there will be a new record time.
+
+I am curious to see which variables have the biggest impact on 40 yard dash times, and I am excited to dive into this data and learn more about the NFL combine!
+
+## Why Might This Model Be Useful?
+
+Having data on the NFL combine and what metrics or events that are strongly related to each other could be very useful for college football players hoping to make the NFL. The fact is, every little performance metric matters for when a player will be drafted, and how a high or low a player is drafted could be the difference between millions of dollars for that player. This model might be able to help players see how the data is related to see what they can do to increase their 40 yard dash time !
+
+## Loading Packages and Data
+
+This project is from a dataset that I found on Kaggle [(Click here to visit)](https://www.kaggle.com/datasets/redlineracer/nfl-combine-performance-data-2009-2019) , and it captures data on more than 3500 players for how they performed in the NFL combine.
+
+I will include a full copy of the codebook in my final report, but here are the main variables I will be looking at:
+
+-   'sprint' - the 40 yard dash time for a given player.
+
+-   'age' - how old a given player was when they were at the combine.
+
+-   'height' - how tall a player is.
+
+-   'weight' - how much a player weighs.
+
+-   'position' - what type of position the player play in football (Ex. Quarterback, running back, wide receiver, etc).
+
+-   'bmi' - the Body Mass Index of a player. This is a measurement for body fat based on the height of a player.
+
+-   'agility' - this is how fast a player can move side to side.
+
+-   'vertical_jump' - how high a player can jump.
+
+-   'broad_jump' - how far a player can jump.
+
+-   'shuttle' - this is not a straight sprint, but it tests how fast a player can sprint in one direction and then switch directions and sprint in the opposite direction.
+
+-   'bench' - this tests how many bench press reps a player can do of 225 pounds.
+
+-   'player_type' - this shows if a player is on offense , defense, or special teams.
+
+
+
+```{r}
+
+# Loading in necessary packages to assist with my statistical analysis
+library(kernlab)
+library(ranger)
+library(janitor)
+library(rpart.plot)
+library(ggplot2)
+library(tidyverse)
+library(tidymodels)
+library(corrplot)
+library(yardstick)
+library(corrr)
+library(pROC)
+library(discrim)
+library(poissonreg)
+library(glmnet)
+library(ggthemes)
+library(vip)
+library(xgboost)
+library(kknn)
+library(dplyr)
+library(purrr)
+library(knitr)
+library(ISLR)
+library(ISLR2)
+library(klaR)
+library(tune)
+library(vembedr)
+library(lubridate, warn.conflicts = FALSE)
+tidymodels_prefer()
+
+```
+
+```{r}
+
+set.seed(888)
+
+```
+
+First I will start off by loading my raw data in and giving it the variable NFL.
+
+```{r}
+
+
+NFL <-  read.csv('/Users/jackpatnoe/Desktop/NFL.csv') 
+
+
+```
+
+## Data Cleaning
+
+The data is relatively clean from the get-go, but there are some changes I want to make to it which I will do in this section. First I will use clean names.
+
+```{r}
+
+# cleaning my data
+NFL <- NFL %>% 
+  clean_names()
+
+
+```
+
+Now, I am going to remove the columns player, school, drafted_tm_rnd_yr, position type, and drafted. A lot of this data could be interesting to keep for a different type of project, but I am mostly interested in the different metrics and measurements for this project.
+
+```{r}
+
+# removing unnecessary columns (variables)
+NFL <- NFL %>%
+  select(-player, -school, -drafted_tm_rnd_yr, -position_type, -drafted)
+
+
+
+```
+
+Next, I am going to rename some of the variable names to make them easier to understand and easier to use.
+
+```{r}
+
+# renaming sprint_40yd to sprint (this is the 40 yard dash time) 
+
+NFL <- NFL %>%
+  rename("sprint" = sprint_40yd)
+
+```
+
+```{r}
+
+# Renaming additional variable names: 
+
+NFL <- NFL %>%
+  rename("bench" = bench_press_reps)
+
+
+NFL <- NFL %>%
+  rename("agility" = agility_3cone)
+
+
+```
+
+At first I thought I wanted to include the year variable to see how combine performance has progressed over the years, but I decided to take this out as well.
+
+```{r}
+
+# Removing year variable
+
+NFL <- NFL %>%
+  select(-year)
+
+
+
+```
+
+The data had height in meters and weight in kilograms, I am more comfortable with height in feet/inches and weight in pounds, so I am going to mutate those two variables to represent the units of measurement I prefer.
+
+```{r}
+
+# Converting height variable into feet / inches
+
+NFL <- NFL %>% 
+  mutate(height = height * 3.281)
+
+
+```
+
+```{r}
+
+# Converting weight variable into pounds. 
+
+NFL <- NFL %>% 
+  mutate(weight = weight * 2.205)
+
+
+
+```
+
+Finally, I am going to remove any NA values in my dataset, as these will affect the models greatly, and I want a full set of clean data only. 
+```{r}
+
+# Removing NA values 
+
+NFL <- na.omit(NFL)
+
+
+```
+
+## Data Splitting
+
+I split my data with our strata as sprint given that this is what I am building the model on. I will split the data to have 80% in a training set, and 20 % in a testing set. The training set has 1,195 data points and the testing set has 302 data points. When I removed NA values, a lot of data got deleted, but this will make our analysis more effective. 
+
+```{r}
+
+# Setting up our initial split 
+
+NFL_Split <- NFL %>% 
+  initial_split(prop = 0.8, strata = "sprint")
+
+NFL_Train <- training(NFL_Split)
+NFL_Test <- testing(NFL_Split)
+
+
+```
+
+
+
+
+## Exploratory Data Analysis
+
+For the EDA section of this report, I will only be using the training data, which has 2,779 data points, all representing a player at the NFL combine. My goal is to investigate different relationships different variables may have, especially when related to the 40 yard dash time.
+
+First, I will take a look at a simple histogram for the distribution of 40 yard dash times:
+
+```{r, fig.align='center'}
+
+ggplot(NFL_Train, aes(sprint)) +
+  geom_bar() +
+  
+  labs(
+    title = "Histogram of 40 Yard Dash Times",
+    x = "40 Yard Dash Time",
+    y = "Count "
+    
+  ) 
+  
+
+
+```
+
+Taking a look at our histogram for 40 yard dash times (Considering all types of players), we see that this is not very normally distributed at all, as there is a strong rightward skew. The mean appears roughly in the range of 4.5 - 4.7, but I am going to continue looking at different variables plotted against the 40 yard dash times to try to learn more.
+
+I figured the age of a player would have an impact on his sprint time, so I am going to plot the different ages with the sprint histograms, respectively:
+
+```{r}
+
+ggplot(NFL_Train, aes(sprint)) +
+  geom_histogram(bin = 50, color = "black") +
+  facet_wrap(~age, scales = "free_y") +
+  labs(
+    title = "Histograms of 40 Yard Dash Time By Age"
+  )
+
+```
+
+This data is interesting, as it shows us the speed distributions across different ages. Intuitively, it makes sense that ages 25 and 26 will not have a lot of data, because the vast majority of football players who attend the NFL combine just graduated college or left college early to declare for the NFL draft.
+
+From this data, we see a general trend that the younger players run faster, as ages 20 abd 21 have a much stronger rightward skew than ages 22, 23 and 24.
+
+Next, I am going to investigate what sprint times look like per position.
+
+```{r}
+
+ggplot(NFL_Train, aes(fill = position, x = sprint)) +
+  geom_bar() +
+  labs(
+    title = "40 Yard Dash Times Per Position ",
+    x = "40 Yard Dash Times",
+    y = "Number of Recorded Times at a given sprint speed")
+
+```
+
+Being a huge NFL fan, this graph is fascinating to me. Seeing the distribution of 40 yard dash times per player is awesome, because I understand how it supposed to look from having a deep knowledge of the game. This graph shows us that WR (Wide Receivers) and CB (Corner Backs) are the faster players on the field by far! Again, this makes sense given how football works and how they are the speed positions on the field who run and catch that ball all game long.
+
+Additionally, this graph shows us that OT (Offensive tackles) and OG ( Offensive Guards) are the slowest players on average. Offensive tackles and offensive guards block for the quarterback, and are generally the heaviest players on the field by far! This makes sense why they lack speed, but this does not discount how important their role is for football!
+
+You can see the far left bin (fastest record time ever) is from a wide receiver, and the far right bin (slowest recorded time ever) is from an offensive tackle.
+
+In order to make this graph more clear, I am going to plot it one more time but flip the axes to show each position as their own histogram:
+
+```{r}
+
+ggplot(NFL_Train, aes(fill = position, y = sprint)) +
+  geom_bar() +
+  facet_wrap(~position) +
+  labs(
+    title = "40 Yard Dash Times For Each Position ",
+    y = "40 Yard Dash Times",
+    x = "Number of Recorded Times at a Given Sprint Speed")
+
+```
+
+This clarifies what we know, that wide receivers and corner backs generally have the fastest times (running backs (RB) as well), and offensive tackles and offensive guards generally have the slowest time (defensive tackles (DT) as well).
+
+Now, I am going to quickly take a look at the differences between offensive, defensive, and special teams for 40 yard dash times.
+
+```{r, fig.width = 7 }
+
+ggplot(NFL_Train, aes(fill = player_type, x = sprint)) +
+  geom_bar() +
+  facet_wrap(~player_type) +
+  labs(
+    title = "Offensive, Defense, and Special Teams Speed Histograms",
+    y = "Count",
+    x = "40 Yard Dash Times")
+
+
+```
+
+This data is interesting, and shows us that although offense and defense both have very fast players, it appears offensive players have a almost a second average, where this is most likely the offensive tackles and guards data being captured. It appears that defensive players are generally a tad faster than offensive players.
+
+Now that I have taken a look into how 40 yard dash times are related with position type and player type, I want to see how 40 yard dash times are correlated with other numeric variable, such as BMI, agility, bench press, vertical jump, and more.
+
+To do this, I will construct a lower triangular correlation matrix, and see what values have a strong positive or negative correlation. This should give me a much a deeper understanding of the data!
+
+```{r, fig.width = 10, fig.height = 10}
+
+ NFL %>% 
+  select(where(is.numeric)) %>% 
+  cor(use = "complete.obs") %>% 
+  corrplot(method = "number", type = "lower")
+
+
+```
+
+Observing this correlation matrix, there are a ton of things to learn, but I am going to focus on the sprint times given that this our main variable of interest.
+
+We can see that sprint has a very strong correlation with ever other variable.
+
+The variables that sprint has a positive correlation with are:
+
+-   Weight (.89)
+
+-   BMI (.86)
+
+-   Agility (.84)
+
+-   Shuttle (.81)
+
+-   Height (.61)
+
+-   Bench(.50)
+
+The variables that sprint has a negative correlation with are:
+
+-   Broad Jump (-.84)
+
+-   Vertical Jump(-.77)
+
+This correlation table provides a ton of valuable information, and it confirms what I thought earlier about weight having a massive impact on 40 yard dash time (WR/CB are normally very skinny and fast, while OT/OG are heavier set and slower).
+
+Agility and Shuttle involving having to be fast as well, so it also makes sense there is a positive correlation between those variables and sprint.
+
+The most shocking thing this data showed me is that there is a strong negative correlation between jumping and sprinting. Although I thought that being able to sprint fast and jump high or far would be positively correlated, it turns out they are not. This is most likely explained by the fact that you can have a group of players (such as line backers) who might not sprint the fastest, but have very strong legs and can jump very high and far! This is further explained by weight and vertical jump having a negative correlation of (-.70) and broad jump and weight having a negative correlation of (-.75).
+
+## Model Building
+
+### Cleaning Data For The Models
+
+Now that we have explored our training data set, it is time to build some models to see how well we can predict our stratified variable sprint!
+
+Firstly, I am going to break the training data set into 3 different groups, one where every variable is a character, one where every variable is numeric, and one where every variable is a factor. I am doing this because I was having issues when running the models until I made this change.
+
+```{r}
+# Setting all of the variables in NFL_Train = Character 
+
+NFL_Train$position <- as.character(NFL_Train$position)
+NFL_Train$player_type <- as.character(NFL_Train$player_type)
+NFL_Train$bmi <- as.character(NFL_Train$bmi)
+NFL_Train$broad_jump <- as.character(NFL_Train$broad_jump)
+NFL_Train$vertical_jump <- as.character(NFL_Train$vertical_jump)
+NFL_Train$shuttle <- as.character(NFL_Train$shuttle)
+NFL_Train$agility <- as.character(NFL_Train$agility)
+NFL_Train$age <- as.character(NFL_Train$age)
+NFL_Train$height <- as.character(NFL_Train$height)
+NFL_Train$weight <- as.character(NFL_Train$weight)
+NFL_Train$sprint <- as.character(NFL_Train$sprint)
+NFL_Train$bench <- as.character(NFL_Train$bench)
+
+# Now NFL Train is all Character! 
+
+```
+
+```{r}
+
+# Building NFL Train Factor Data 
+
+NFL_Train_Factor <- NFL_Train
+NFL_Train_Factor[] <- lapply(NFL_Train_Factor, factor)
+
+```
+
+```{r}
+
+# Building out our NFL Train Numeric 
+# NOTE: I am sorry a lot of this is hard coded, was the only way my R studio was accepting these new data sets to work with my modeling. 
+
+NFL_Train_Numeric <- NFL_Train_Factor
+NFL_Train_Numeric$bmi <- as.numeric(NFL_Train_Numeric$bmi)
+NFL_Train_Numeric$position <- as.numeric(NFL_Train_Numeric$position)
+NFL_Train_Numeric$sprint <- as.numeric(NFL_Train_Numeric$sprint)
+NFL_Train_Numeric$bench <- as.numeric(NFL_Train_Numeric$bench)
+NFL_Train_Numeric$broad_jump <- as.numeric(NFL_Train_Numeric$broad_jump)
+NFL_Train_Numeric$vertical_jump <- as.numeric(NFL_Train_Numeric$vertical_jump)
+NFL_Train_Numeric$agility <- as.numeric(NFL_Train_Numeric$agility)
+NFL_Train_Numeric$shuttle <- as.numeric(NFL_Train_Numeric$shuttle)
+NFL_Train_Numeric$player_type <- as.numeric(NFL_Train_Numeric$player_type)
+NFL_Train_Numeric$age <- as.numeric(NFL_Train_Numeric$age)
+NFL_Train_Numeric$height <- as.numeric(NFL_Train_Numeric$height)
+NFL_Train_Numeric$weight <- as.numeric(NFL_Train_Numeric$weight)
+
+
+```
+
+Now that I have split up the training data, I am going to quickly do the same thing for the testing data:
+
+```{r}
+# Setting up Testing data the same way: 
+
+NFL_Test$position <- as.character(NFL_Test$position)
+NFL_Test$player_type <- as.character(NFL_Test$player_type)
+NFL_Test$bmi <- as.character(NFL_Test$bmi)
+NFL_Test$broad_jump <- as.character(NFL_Test$broad_jump)
+NFL_Test$vertical_jump <- as.character(NFL_Test$vertical_jump)
+NFL_Test$shuttle <- as.character(NFL_Test$shuttle)
+NFL_Test$agility <- as.character(NFL_Test$agility)
+NFL_Test$age <- as.character(NFL_Test$age)
+NFL_Test$height <- as.character(NFL_Test$height)
+NFL_Test$weight <- as.character(NFL_Test$weight)
+NFL_Test$sprint <- as.character(NFL_Test$sprint)
+NFL_Test$bench <- as.character(NFL_Test$bench)
+
+
+```
+
+```{r}
+
+# Building Testing Factor data set: 
+
+NFL_Test_Factor <- NFL_Test
+NFL_Test_Factor[] <- lapply(NFL_Test_Factor, factor)
+
+```
+
+```{r}
+
+# Hard coding testing numeric data set: 
+
+NFL_Test_Numeric <- NFL_Test_Factor
+NFL_Test_Numeric$bmi <- as.numeric(NFL_Test_Numeric$bmi)
+NFL_Test_Numeric$position <- as.numeric(NFL_Test_Numeric$position)
+NFL_Test_Numeric$sprint <- as.numeric(NFL_Test_Numeric$sprint)
+NFL_Test_Numeric$bench <- as.numeric(NFL_Test_Numeric$bench)
+NFL_Test_Numeric$broad_jump <- as.numeric(NFL_Test_Numeric$broad_jump)
+NFL_Test_Numeric$vertical_jump <- as.numeric(NFL_Test_Numeric$vertical_jump)
+NFL_Test_Numeric$agility <- as.numeric(NFL_Test_Numeric$agility)
+NFL_Test_Numeric$shuttle <- as.numeric(NFL_Test_Numeric$shuttle)
+NFL_Test_Numeric$player_type <- as.numeric(NFL_Test_Numeric$player_type)
+NFL_Test_Numeric$age <- as.numeric(NFL_Test_Numeric$age)
+NFL_Test_Numeric$height <- as.numeric(NFL_Test_Numeric$height)
+NFL_Test_Numeric$weight <- as.numeric(NFL_Test_Numeric$weight)
+
+```
+
+### Folding Data and Creating Recipe
+
+Now that we have done some EDA with our training data, we are going to start building some models to predict 40 yard dash speed.
+
+I will start with folding our different training data sets, with strata = sprint.
+
+Note: When removing NA values from my data in the beginning, it decreased the size of the data by a lot. Therefore, for my models to work I had to use smaller folds.
+
+```{r}
+
+# Using A V fold and creating 3 new variables: 
+
+NFL_Folds <- vfold_cv(NFL_Train, v = 3, strata = sprint)
+
+NFL_Folds_Factor <- vfold_cv(NFL_Train_Factor, v = 3, strata = sprint)
+
+NFL_Folds_Numeric <- vfold_cv(NFL_Train_Numeric, v = 3, strata = sprint)
+
+```
+
+Now, I am going to create my recipes! I will create different recipes for the character, numeric, and factor data types.
+
+```{r}
+
+# Defining our Different Recipes 
+
+# Character Recipe 
+
+NFL_Recipe_C <- recipe(sprint ~ age, weight, bmi, height, bench, position, player_type, data = NFL_Train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) %>%
+  step_normalize(all_predictors()) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) 
+  
+   
+
+# Factor Recipe: 
+
+NFL_Recipe_F <- recipe(sprint ~ age, weight, bmi, height, bench, position, player_type,  data = NFL_Train_Factor) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_normalize(all_predictors()) 
+  
+
+# Numeric Recipe: 
+
+NFL_Recipe_N <- recipe(sprint ~ age, weight, bmi, height, bench, position, player_type,  data = NFL_Train_Numeric) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_normalize(all_predictors()) 
+   
+```
+
+### Logistical Regression Model:
+
+Now that I have the recipes, folds, and data in order, we can build the first model!
+
+My First Model will be a logisitcal Regression Model.
+
+```{r}
+
+# Setting up Log Reg Variable: 
+# Using Classification enginge: 
+
+NFL_Log_Reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+# Setting up log workflow and adding Recipes: 
+
+NFL_log_wkflow <- workflow() %>% 
+  add_model(NFL_Log_Reg) %>% 
+  add_recipe(NFL_Recipe_C)
+
+# Setting up my log fit: 
+
+NFL_Log_Fit <- fit(NFL_log_wkflow, NFL_Train)
+
+```
+
+```{r}
+
+# Setting up my log accuracy: 
+
+NFL_log_acc <- predict(NFL_Log_Fit, new_data = NFL_Train_Factor, type = "class") %>% 
+  bind_cols(NFL_Train_Factor %>% select(sprint)) %>% 
+  accuracy(sprint, estimate = .pred_class)
+
+NFL_log_acc
+```
+
+Taking a look out how this model performed, we are not very pleased to say the least. Our estimate was .00251046, which is a very low estimate. Because this model is in the mode of classification, I believe it will have a lot of trouble predicting the exact 40 yard dash time, so it makes sense that it performed bad. 
+
+### Ridge Model
+
+Now, I will build a ridge model, which is a regression model. I will use the Numeric data set for this model.
+
+```{r}
+
+# Using step dummy, step normalize, an step center to make this model work
+# R gave me weird outputs if I did not use step normalize! 
+
+NFL_ridge_recipe <- recipe(sprint ~ ., data = NFL_Train_Numeric) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_predictors()) %>%
+  step_center(all_predictors())
+
+# Setting up our ridge spec with mixture = 0
+
+NFL_ridge_spec <- linear_reg(penalty = tune(), mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet")
+
+# Setting up our NFL ridge workflow: 
+
+NFL_ridge_workflow <- workflow() %>% 
+  add_recipe(NFL_ridge_recipe) %>% 
+  add_model(NFL_ridge_spec)
+
+
+```
+
+Now, I want to get ready to plot this model.
+
+```{r}
+
+# Setting up our Penalty grid: 
+
+NFL_penalty_grid <- grid_regular(penalty(range = c(-2, 2)), levels = 50)
+
+#Setting up our tune res to be able to fit the model: 
+
+NFL_tune_res_ridge <- tune_grid(NFL_ridge_workflow,resamples = NFL_Folds_Numeric, grid = NFL_penalty_grid)
+
+# Plotting: 
+
+autoplot(NFL_tune_res_ridge)
+
+
+```
+
+Now I can create our best penalty to create our NFL ridge final fit, which I can use against the test set to see our metrics and how the model perfomed.
+
+```{r}
+
+# Creating our "Best Penalty" From the Ridge model: 
+
+NFL_best_penalty <- select_best(NFL_tune_res_ridge, metric = "rsq")
+
+# Creating our final fit from using the best penalty: 
+
+NFL_ridge_final <- finalize_workflow(NFL_ridge_workflow, NFL_best_penalty)
+NFL_ridge_final_fit <- fit(NFL_ridge_final, data = NFL_Train_Numeric)
+
+#Setting test as numeric (R was giving me issues)
+
+NFL_Test_Numeric$sprint <- as.numeric(NFL_Test_Numeric$sprint)
+
+# Creating our Ridge Metric! : 
+
+NFL_ridge_metric <- augment(NFL_ridge_final_fit, new_data = NFL_Test_Numeric) %>%
+  rsq(truth = sprint, estimate = .pred)
+
+# Plotting NFl Ridge Metric to see our estimate
+
+NFL_ridge_metric
+
+```
+
+Our RSQ Metric is .8603985, which is very good ! I am happy to see this, and will now move on to my third model.
+
+### Lasso Model
+
+Now I will set up a Lasso model, which is similar to the ridge model. I am curious to see which one perfomes better, as I expect them to perform fairly similar!
+
+```{r}
+
+# Building Lasso Recipe: 
+
+NFL_lasso_recipe <- 
+  recipe(formula = sprint ~ ., data = NFL_Train_Numeric) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_predictors()) %>%
+  step_center(all_predictors())
+
+# Building the Lasso Spec: 
+# Setting Mixture = 1 for Lasso
+
+NFL_lasso_spec <- 
+  linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") 
+
+# Building my Lasso Workflow: 
+
+NFL_lasso_workflow <- workflow() %>% 
+  add_recipe(NFL_lasso_recipe) %>% 
+  add_model(NFL_lasso_spec)
+
+
+```
+
+Now, I am going to set up the pentalty grid and plot what this model looks like!
+
+```{r}
+
+
+NFL_L_penalty_grid <- grid_regular(penalty(range = c(-3, 1)), levels = 50)
+
+NFL_tune_res_L <- tune_grid(NFL_lasso_workflow, resamples = NFL_Folds_Numeric, grid = NFL_L_penalty_grid)
+
+autoplot(NFL_tune_res_L)
+
+```
+
+Finally, I will find the best penalty using the metric RSQ, and attach it to a final fit for the NFL lasso model to be able to get some metrics about how this model performed.
+
+```{r}
+
+# Find Best Lasso Penalty: 
+
+NFL_best_penalty_L <- select_best(NFL_tune_res_L, metric = "rsq")
+
+# Setting up Final Lasso Workflow / Fit: 
+
+NFL_lasso_final <- finalize_workflow(NFL_lasso_workflow, NFL_best_penalty_L)
+NFL_lasso_final_fit <- fit(NFL_lasso_final, data = NFL_Train_Numeric)
+
+# Finding oyr best metric from Lasso model: 
+
+NFL_lasso_metric <- augment(NFL_lasso_final_fit, new_data = NFL_Test_Numeric) %>%
+  rsq(truth = sprint, estimate = .pred)
+
+# Seeing what the metric is: 
+
+NFL_lasso_metric
+
+```
+
+The Lasso rsq estimate is .8684285. This means it performed slightly better than the ridge model, but both performed very similar as we would expect, given they both have similar feature and are regression models.
+
+### Boosted Model
+
+Now, we are going to try a boosted model ! This model we will use the random forest engine, and our outputs will look very different than the previous models.
+
+```{r}
+
+# Setting up the NFL Boosted Spec: 
+
+NFL_Boosted_spec <- rand_forest(mtry = .cols()) %>%
+  set_engine("randomForest", importance = TRUE) %>%
+  set_mode("regression")
+
+# Setting up the NFL Boosted fit: 
+# Using numeric data for the fit: 
+
+NFL_Boosted_fit <- fit(NFL_Boosted_spec, sprint ~ ., 
+                   data = NFL_Train_Numeric)
+
+# Showing our RMSE for the boosted bit: 
+
+augment(NFL_Boosted_fit, new_data = NFL_Train_Numeric) %>%
+  rmse(truth = sprint, estimate = .pred)
+
+
+```
+
+Our RMSE for this boosted fit model is 4.440054. Now, I am going to plot this data to see what it looks like.
+
+```{r}
+
+# Plotting the NFL Boosted Fit: 
+
+augment(NFL_Boosted_fit, new_data = NFL_Train_Numeric) %>%
+  ggplot(aes(sprint, .pred)) +
+  geom_abline() +
+  geom_point(alpha = .1, color = "red")
+
+```
+
+Looking at this output, we can see this model is performing extremely well! a 4.36 RSME seems to be enough for a great model. Now, I am going to use VIP to see what variables are the most important:
+
+```{r}
+
+# Calling VIP to boosted fit: 
+
+vip(NFL_Boosted_fit)
+
+```
+
+This model tell me that the weight variable has the most importance by far. This is exciting, given the fact that in the EDA section we saw the same trend!
+
+Now, I am going to set up the boosted workflow and plot this model!
+
+```{r, fig.width = 10}
+
+# Setting up our boosted model: 
+
+NFL_boost_model <- boost_tree(min_n = tune(), mtry = tune(), trees = tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+# Setting up boosted workflow: 
+
+NFL_boost_wf <- workflow() %>%
+  add_recipe(NFL_Recipe_N) %>%
+  add_model(NFL_boost_model)
+
+# Setting up boosted grid ( I had to play around with these numbers a lot, and I do not think I got them perfect, but it ended up being sufficient)
+
+NFL_boost_grid <- grid_regular(min_n(range = c(1, 8)), mtry(range = c(1, 5)), trees(range = c(1, 6)), levels = 7)
+
+# Setting up tune rest boost using new variables:
+
+NFL_tune_res_boost <- tune_grid(
+  NFL_boost_wf,
+  resamples = NFL_Folds_Numeric,
+  grid = NFL_boost_grid
+)
+
+# Plotting: 
+
+autoplot(NFL_tune_res_boost)
+
+```
+
+The plots look interesting. They do not give us much information for RMSE, but we can see there are some interesting trends in RSQ for different node sizes and trees. 
+
+Finally, I am going to take a look at the metrics for the boosted model: 
+```{r}
+NFL_boosted_metric <- arrange(collect_metrics(NFL_tune_res_boost), desc(mean))
+
+NFL_boosted_metric
+
+```
+
+It looks like from the Boosted model, our lowest RMSE is 31.87, and our highest RSQ is .0108. I think there are lot of interesting things to learn from this model, but upon first look my guess is this will not be the one I pick for my final model building.  
+
+### Random Forest Model
+
+Now, the final model I am going to try is a Random Forest Model! I will start by building it and then testing to see how it works.
+
+```{r}
+
+# Setting up NFL Random Spec
+# Using Ranger Engine
+
+NFL_random_spec <- rand_forest(mtry = tune(), min_n = tune(), trees = tune()) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+```
+
+```{r, message = FALSE}
+
+# Setting up our Random Forest Workflow: 
+
+NFL_random_wkFlow <- workflow() %>%
+  add_recipe(NFL_Recipe_N) %>%
+  add_model(NFL_random_spec)
+
+# Setting up our Random Forest Grid: 
+
+NFL_random_grid <- grid_regular(min_n(range = c(1,5)), mtry(range = c(1,3)), 
+                            trees(range = c(1,4)), levels = 3)
+
+# Setting tune res for the random forest using new variables: 
+
+NFL_tune_res_random = tune_grid(
+  NFL_random_wkFlow, 
+  resamples = NFL_Folds_Numeric,
+  grid = NFL_random_grid
+)
+
+```
+
+After setting up the model, we an plot it to see how it looks! 
+
+```{r}
+
+# Plotting the random forest tune res 
+
+autoplot(NFL_tune_res_random)
+
+
+```
+
+This plots tell me a lot of things, most importantly that the data is relatively scattered depending on node size and number of trees. Next, I am going to take a look at the metrics from this plot to learn more so I can dive deeper into the model.
+
+```{r}
+
+# Plotting the metrics 
+
+NFL_random_metric <- arrange(collect_metrics(NFL_tune_res_random), desc(mean))
+NFL_random_metric
+
+```
+
+Looking at this data from the Metrics, I get the lowest RMSE when mtry = 1, trees = 4, and min_n = 5. I am going to create a visual of importance using those points.
+
+```{r}
+
+# NFL Random Spec Fit gives us mtry = 1, trees = 4, and min_n = 5 which is when our RMSE value was minimized (AKA the best)
+
+NFL_Random_Spec_Fit <- rand_forest(mtry = 1, trees = 4, min_n = 5) %>%
+  set_engine("ranger", importance = "impurity")%>%
+  set_mode("regression")
+
+# Using this to set up another fit: 
+
+NFL_random_fit <- fit(NFL_Random_Spec_Fit, sprint ~ ., 
+                  data = NFL_Train_Numeric)
+
+# Graphing this to see what variables are important in this model! 
+
+vip(NFL_random_fit)
+
+```
+
+Looking at the importance levels in the random forest model, we see that this model has BMI as the most important variable now! This is interesting, because BMI is also related to weight, but it is more dependent on height of player as well and not just pure weight.
+
+The reason this could work, is that if a player weighs a lot but is very tall and strong, they could still run very fast! But if their BMI is high, that could imply they are overweight in regards to their height!
+
+This also shows that bench press is the least important factor. I guess you are either very strong or very fast! (And if you are both, you will probably get drafted!)
+
+### KNN Model
+
+For my final Model, I am going to use the KNN Model, also known as nearest neighbor.
+
+```{r}
+
+# Defining our NFL KNN model: 
+# Setting engine to kknn:
+
+NFL_knn_model <- nearest_neighbor(neighbors = tune(), mode = "classification") %>% 
+  set_engine("kknn")
+
+# Setting up the NFL Knn workflow: 
+# I will be using my character recipe for this one: 
+
+NFL_knn_workflow <- workflow() %>% 
+  add_model(NFL_knn_model) %>% 
+  add_recipe(NFL_Recipe_C)
+
+# Setting up parameters: 
+
+NFL_knn_params <- extract_parameter_set_dials(NFL_knn_model)
+
+# Setting up our grid: 
+
+NFL_knn_grid <- grid_regular(NFL_knn_params, levels = 8)
+
+# Setting up our tune Res : 
+# I will use my normal NFL Folds data for this model (It is character form)
+
+NFL_tune_res_knn <- tune_grid(NFL_knn_workflow, resamples = NFL_Folds, grid = NFL_knn_grid, metrics = metric_set(roc_auc))
+
+# Plotting the KNN Model: 
+
+autoplot(NFL_tune_res_knn)
+
+
+
+```
+
+Taking a look at this KNN Model graph, the ROC_AUC is relatively stable and consistent throughout. Although it looks like there is a clear trend, the Y axis only ranges from about .497 to .501. Now, I am going to collect the metris to see what the highest ROC_AUC was. 
+
+```{r}
+
+NFL_knn_metric <- arrange(collect_metrics(NFL_tune_res_knn), desc(mean))
+
+NFL_knn_metric
+```
+
+Looking the metrics from our Knn, our highest mean (metric being ROC_AUC), was .50! This is our highest accuracy for an Roc_Auc yet!
+
+## Final Model Building
+
+Now that I have ran several different models, it is time to choose on that works best! Some different metrics I used were RSME, RSQ, and ROC_AUC. Given this, there is no clear winner in what model should be the best, because different metrics were used for each model. But, analyzing everything as a whole, I believe the most significant models were the Ridge and Lasso models, as the RSQ value was very high. Lasso had a slightly higher RSQ than ridge, so I am going to use Lasso to build my final model!
+
+First, I will define my NFL Best Model. This is the model that I believe the data suggests is the most statistically significant in predicting 40 yard dash times, given that our RSQ suggests the model does a very good job at fitting the data!
+
+```{r}
+
+# Building out Final Model: 
+# Using workflow from earlier (Lasso)
+# Metric = RSQ ! 
+
+
+NFL_Best_Model <- select_best(NFL_tune_res_L, metric = "rsq")
+Lasso_Best_Final <- finalize_workflow(NFL_lasso_workflow, NFL_Best_Model)
+
+# Setting up my final Training Fit: 
+
+Lasso_Train_Final_Fit <- fit(Lasso_Best_Final, data = NFL_Train_Numeric)
+
+
+```
+
+Using my final model, I will predict the RSQ Level for training data one last time:
+
+```{r}
+
+
+
+predict(Lasso_Train_Final_Fit, new_data = NFL_Train_Numeric, type = "numeric" ) %>%
+  bind_cols(NFL_Train_Numeric %>% select(sprint)) %>%
+  rsq(truth = sprint, estimate = .pred)
+
+
+```
+
+The Predicted RSQ is .876 for the training data.
+
+Now, I am going to test this model on the test data! 
+
+```{r}
+
+Lasso_Test_Final_Fit <- fit(Lasso_Best_Final, data = NFL_Test_Numeric) 
+
+predict(Lasso_Test_Final_Fit, new_data = NFL_Test_Numeric, type = "numeric")%>%
+  bind_cols(NFL_Test_Numeric %>% select(sprint)) %>% 
+  rsq(truth = sprint, estimate = .pred)
+ 
+
+
+```
+
+The RSQ on the testing data is .8753, which I believe suggests this model is a great fit, and it works well!
+
+## Predictions
+
+For the predictions, I will go through my testing data set and pick exact data points that are in that set. By only leaving out the sprint point, we can use all of the other variables to predict sprint, the 40 yard dash speed!
+
+The interesting thing is this is real data, so we are going to be able to see how well the model works! 
+
+First prediction: 
+
+age = 3, height = 7, weight = 69, vertical_jump = 33, bench = 18, broad_jump = 24, agility = 75, shuttle = 49, bmi = 161, player_type = 1, and position = 3. Our sprint value is 49, lets see how this goes!
+```{r}
+
+Sprint_prediction_1 <- data.frame(
+  age = 3,
+  height = 7 ,
+  weight = 69,
+  vertical_jump = 33  ,
+  bench = 18,
+  broad_jump = 24,
+  agility = 75,
+  shuttle = 49,
+  bmi = 161,
+  player_type = 1,
+  position = 3)
+
+predict(Lasso_Test_Final_Fit, Sprint_prediction_1)
+
+
+
+```
+
+The predicted value is 44.5659,  and the real value was 49 ! This is a pretty solid prediction!
+
+
+Second prediction: 
+
+age = 3, height = 3, weight = 3, vertical_jump = 36, bench = 5, broad_jump = 19, agility = 32, shuttle = 22, bmi = 17, player_type = 1, and position = 2. Our sprint value is 9, lets see how this goes!
+```{r}
+
+Sprint_prediction_2 <- data.frame(
+  age = 3,
+  height = 3 ,
+  weight = 3,
+  vertical_jump = 36  ,
+  bench = 5,
+  broad_jump = 19,
+  agility = 32,
+  shuttle = 22,
+  bmi = 17,
+  player_type = 1,
+  position = 2)
+
+predict(Lasso_Test_Final_Fit, Sprint_prediction_2)
+
+
+
+```
+
+The model predicted 21.7663, real value was 9. Not bad!
+
+Final prediction: 
+
+age = 2, height = 7, weight = 21, vertical_jump = 34, bench = 2, broad_jump = 28, agility = 44, shuttle = 57, bmi = 16, player_type = 2, and position = 15. Our sprint value is 20, lets see how this goes!
+
+```{r}
+
+
+Sprint_prediction_3 <- data.frame(
+  age = 2,
+  height = 7 ,
+  weight = 21,
+  vertical_jump = 34  ,
+  bench = 2,
+  broad_jump = 28,
+  agility = 44,
+  shuttle = 57,
+  bmi = 16,
+  player_type = 2,
+  position = 15)
+
+predict(Lasso_Test_Final_Fit, Sprint_prediction_3)
+
+
+
+```
+
+Predicted value is 20.72213, the real value is 20! This is very good!
+
+## Conclusion
+
+For this project, I analyzed data from 2009 to 2019 from the NFL combine. The reason why I chose this data set is because I have always been a huge fan of football and the NFL!
+
+The NFL combine brings in some of the best college football players around the country to show off their football abilities, but also to display their physical abilities, such as strength, speed, agility, and more. The 40 yard dash is the most talked about event at the combine, so I wanted to investigate what variables are correlated with 40 yard dash times.
+
+In my exploratory data analysis section, I compared sprint speed to many different things, such as position, age, physical factors, and more.
+
+What I learned was corner backs and wide receivers, on average, are by far the fastest players! On the other hand, offensive tackles and offensive guards are the slowest players.
+
+I also learned that weight has the strongest correlation with sprint speed. The lighter you are, the faster you will most likely run. The heavier you are, the slower you will most likely run.
+
+After looking into all of this data, I built several different models with sprint as my stratified variable. The models I chose were Logistic Regression, Ridge, Lasso, Boosted, Random Forest, and Knn. All of these models tested different metrics, some testing RMSE, some RSQ, and some ROC_AUC.
+
+I believe the data suggested that the Lasso model was the most statistically significant and the best fit, being that the RSQ value of .86 was very high! I then tested this model against the testing set, and found that it worked very well in predicting sprint speed.
+
+In my final prediction, the model was able to predict a sprint speed of 20.7 and the actually sprint speed was 20, which is nearly spot on!
+
+I had a ton of fun working with this dataset, and the amount of different models and variables there are to play with in this dataset is endless.
+
+Thank you for reading my report! Go Bills ! (My favorite football team).
